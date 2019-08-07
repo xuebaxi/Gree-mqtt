@@ -3,8 +3,14 @@ import socket
 from Crypto.Cipher import AES
 import json
 from Crypto.Util.Padding import pad,unpad
+try:
+    import netifaces
+except:
+    nonetifaces=True
+else:
+    nonetifaces=False
 class Gree():
-    def __init__ (self,hvac_host,key=0):
+    def __init__ (self,hvac_host=0,key=0):
         """init and get hvac key"""
         self.hvac_host=hvac_host
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -46,6 +52,27 @@ class Gree():
 
 
     def senddata(self,data:str):
+        if self.hvac_host==0:
+            """scan hvac"""
+            broadcast=socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            broadcast.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            if  nonetifaces:
+                broadcast.sendto('{"t":"scan"}'.encode(),("255.255.255.255",7000))
+            else:
+                broadcastip=[]
+                cars=netifaces.interfaces()
+                try:
+                    cars.remove('lo')
+                except:
+                    pass
+                for car in cars:
+                    broadcastip.append(netifaces.ifaddresses(car)[netifaces.AF_INET][0].get('broadcast'))
+                for ip in broadcastip:
+                    broadcast.sendto('{"t":"scan"}'.encode(),(ip,7000))
+            addr=broadcast.recvfrom(1024)[1]
+            broadcast.close()
+            self.hvac_host=addr[0]
+
         #print(data)
         self.sock.sendto(data.encode(),(self.hvac_host,7000))
     def getdata(self):
