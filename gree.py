@@ -9,6 +9,28 @@ except:
     nonetifaces=True
 else:
     nonetifaces=False
+
+class gPack():
+    def __init__(self, mac):
+        self.mac = mac
+    
+    def packIt(self, cols:list, type=0, p=None):
+        """
+        creates a pack
+        type0: reading status of a device
+        type1: controlling a device 
+        """
+        assert cols != [], 'operation parameters not set'
+        if type == 0:
+            _pack = {"cols":cols, "mac": self.mac, "t": "status"}
+        elif type == 1:
+            assert p is not None, 'operation parameter values not set'
+            _pack = {"opt":cols, "p": p, "t": "cmd"}
+        
+        return _pack
+
+
+
 class Gree():
     def __init__ (self,hvac_host=0,key=0):
         """init and get hvac key"""
@@ -24,6 +46,8 @@ class Gree():
         else:
             self.key=key
         self.cipher = AES.new(self.key.encode(), AES.MODE_ECB)
+
+        self.gPack = gPack(self.baseinfo.get("mac"))
 
     def encrypt(self,data:str,key=0):
         """encrypt data"""
@@ -92,8 +116,9 @@ class Gree():
         self.senddata(data)
     def getpack(self):
         data=self.getdata()
-        #print(data)
+        print(data)
         pack = self.decrypt(data['pack'])
+        print(pack)
         pack_=json.loads(pack)
         return pack_
     def getbaseinfo(self):
@@ -115,3 +140,7 @@ class Gree():
     def sendcom(self,pack:dict):
         self.sendpack(pack,0)
         return self.getpack()
+
+    def test_open(self):
+        _pack = self.gPack.packIt(["Pow"], type=1, p=[1])
+        self.sendpack(_pack,0)
