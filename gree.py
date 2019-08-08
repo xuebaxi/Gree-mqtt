@@ -1,7 +1,9 @@
 import base64
 import socket
-from Crypto.Cipher import AES
 import json
+import logging
+from functools import wraps
+from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad,unpad
 try:
     import netifaces
@@ -10,25 +12,67 @@ except:
 else:
     nonetifaces=False
 
+
+# logging 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def logged(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        logger.info('running %s' % func.__name__)
+        try:
+            return func(*args, **kwargs)
+        except:
+            logger.exception('%s' % func.__name__)
+            raise
+    return wrapper
+
+gStatus = {
+    'Pow': (0,1),
+    'Mod': (0,1,2,3,4),
+    #"SetTem":, 
+    "WdSpd": (0,1,2,3,4,5), 
+    "Air": (0,1), 
+    "Blo": ("Blow","X-Fan"), 
+    "Health": (0,1), 
+    "SwhSlp": (0,1), 
+    "Lig": (0,1), 
+    "SwingLfRig": (0,1,2,3,4,5,6), 
+    "SwUpDn": (0,1,2,3,4,5,6,7,8,9,10,11), 
+    "Quiet": (0,1), 
+    "Tur": (0,1), 
+    # "StHt":, 
+    # "TemUn":, 
+    # "HeatCoolType":, 
+    "TemRec": (0,1), 
+    "SvSt": (0,1),
+}
+
+def paramTest(params, values=None):
+    logger.debug('opt parameters: %s, values: %s' % (params, values))
+    assert params != [], 'opt parameters not set'
+    assert set(params) <= set(gStatus.keys()), 'invalid opt parameters'
+    if values is not None:
+        for k,v in zip(params, p):
+            assert v in gStatus[k], 'invalid opt values'
+
 class gPack():
     def __init__(self, mac):
         self.mac = mac
     
+    @logged
     def packIt(self, cols:list, type=0, p=None):
         """
         creates a pack
         type0: reading status of a device
         type1: controlling a device 
         """
-        assert cols != [], 'operation parameters not set'
         if type == 0:
-            _pack = {"cols":cols, "mac": self.mac, "t": "status"}
+             return {"cols":cols, "mac": self.mac, "t": "status"}
         elif type == 1:
-            assert p is not None, 'operation parameter values not set'
-            _pack = {"opt":cols, "p": p, "t": "cmd"}
-        
-        return _pack
-
+            assert p is not None, 'opt values not set'
+            return {"opt":cols, "p": p, "t": "cmd"}
 
 
 class Gree():
@@ -47,7 +91,6 @@ class Gree():
             self.key=key
         self.cipher = AES.new(self.key.encode(), AES.MODE_ECB)
 
-        self.gPack = gPack(self.baseinfo.get("mac"))
 
     def encrypt(self,data:str,key=0):
         """encrypt data"""
@@ -58,7 +101,7 @@ class Gree():
         utfdata=data.encode()
         paded=pad(utfdata,self.BLOCK_SIZE)
         encrypted=cipher.encrypt(paded)
-        #print(encrypted)
+        logger.debug(encrypted)
         baseed=base64.b64encode(encrypted)
         return baseed.decode()
     def decrypt(self,data:str,key=0):
@@ -69,7 +112,7 @@ class Gree():
             cipher = self.cipher
         debase=base64.b64decode(data.encode())
         decrypted=cipher.decrypt(debase)
-        #print(decrypted)
+        logger.debug(decrypted)
         unpaded=unpad(decrypted,self.BLOCK_SIZE)
         strdata=unpaded.decode()
         return strdata
@@ -97,7 +140,7 @@ class Gree():
             broadcast.close()
             self.hvac_host=addr[0]
 
-        #print(data)
+        logger.debug(data)
         self.sock.sendto(data.encode(),(self.hvac_host,7000))
     def getdata(self):
         return json.loads(self.sock.recv(1024).decode())
@@ -112,13 +155,13 @@ class Gree():
             "uid":0
         }
         data=json.dumps(data_)
-        #print(data)
+        logger.debug(data)
         self.senddata(data)
     def getpack(self):
         data=self.getdata()
-        print(data)
+        logger.debug(data)
         pack = self.decrypt(data['pack'])
-        print(pack)
+        logger.debug(pack)
         pack_=json.loads(pack)
         return pack_
     def getbaseinfo(self):
@@ -126,7 +169,7 @@ class Gree():
         data=json.dumps(data_)
         self.senddata(data)
         baseinfo=self.getdata()
-        #print(baseinfo)
+        logger.info("ac baseinfo: %s " % baseinfo)
         return json.loads(self.decrypt(baseinfo['pack']))
     def getkey(self,mac):
         pack={
@@ -141,6 +184,21 @@ class Gree():
         self.sendpack(pack,0)
         return self.getpack()
 
-    def test_open(self):
-        _pack = self.gPack.packIt(["Pow"], type=1, p=[1])
-        self.sendpack(_pack,0)
+
+class gController():
+    def __init__(self,hvac_host):
+        self.g = Gree(hvac_host)
+        mac = self.g.baseinfo.get("mac")
+        self.gp = gPack(mac)
+    
+    def OnOffSwitch(self):
+        _pack = self.gp.packIt(["Pow"], type=0)
+        curStatus = self.g.sendcom(_pack)['dat'][0]
+        s = 1 if curStatus == 0 else 0
+        _pack = self.gp.packIt(["Pow"], type=1, p=[s])
+        self.g.sendcom(_pack)
+    
+
+
+
+
