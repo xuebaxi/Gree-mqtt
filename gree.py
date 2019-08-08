@@ -13,6 +13,7 @@ else:
     nonetifaces = False
 import mqtt
 import argparse
+import time
 
 
 # logging
@@ -234,6 +235,9 @@ class gController():
 def on_message(client, userdata, msg):
     pass
 
+def publish_message(data,mqttc,t):
+    topic=t+"/get"
+    mqttc.publish(topic,data)
 
 def main():
     parser = argparse.ArgumentParser(description='Gree Mqtt')
@@ -259,7 +263,15 @@ def main():
     mqttc.on_message = on_message
     mqttc.connect(args.broker, int(args.port), args.topic,
                   args.username, args.password, args.tls, args.selfsigned, args.selfsignedfile)
-    mqttc.loop_forever() #This is a blocking form of the network loop
+    mqttc.loop_start()
+    chvac = gController()
+    while True:
+        status={}
+        for i in gStatus.keys():
+            status[i]=chvac.checkCurStatus(i)
+        publish_message(json.dumps(status),mqttc,args.topic)
+        time.sleep(10)
+
 
 if __name__ == "__main__":
 
