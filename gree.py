@@ -2,6 +2,7 @@ import base64
 import socket
 import json
 import logging
+from sys import argv
 from functools import wraps
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad, unpad
@@ -180,7 +181,7 @@ class Gree():
         data = json.dumps(data_)
         self.senddata(data)
         baseinfo = self.getdata()
-        logger.info("ac baseinfo: %s " % baseinfo)
+        logger.debug("ac baseinfo: %s " % baseinfo)
         return json.loads(self.decrypt(baseinfo['pack']))
 
     def getkey(self, mac):
@@ -207,6 +208,12 @@ class gController():
     def checkCurStatus(self, p):
         _pack = self.gp.packIt([p], type=0)
         status = self.g.sendcom(_pack)["dat"][0]
+        logger.info("current %s: %s" % (p, status))
+        return status
+
+    def checkAllCurStatus(self, p):
+        _pack = self.gp.packIt(p, type=0)
+        status = self.g.sendcom(_pack)["dat"]
         logger.info("current %s: %s" % (p, status))
         return status
 
@@ -240,6 +247,8 @@ def publish_message(data,mqttc,t):
     mqttc.publish(topic,data)
 
 def main():
+    if len(argv)==1:
+        argv.append('-h')
     parser = argparse.ArgumentParser(description='Gree Mqtt')
     parser.add_argument("--hvac-host", dest="hvac",
                         help="hvac host ip (default: auto scan)", default=None)
@@ -266,13 +275,11 @@ def main():
     mqttc.loop_start()
     chvac = gController()
     while True:
-        status={}
-        for i in gStatus.keys():
-            status[i]=chvac.checkCurStatus(i)
+        gkeys = list(gStatus.keys())
+        status = dict(zip(gkeys, chvac.checkAllCurStatus(gkeys)))
         publish_message(json.dumps(status),mqttc,args.topic)
-        time.sleep(10)
+        time.sleep(60)
 
 
 if __name__ == "__main__":
-
     main()
