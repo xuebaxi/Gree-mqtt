@@ -31,7 +31,7 @@ def logged(func):
 gStatus = {
     'Pow': (0,1),
     'Mod': (0,1,2,3,4),
-    #"SetTem":, 
+    "SetTem": tuple(range(17,31)), 
     "WdSpd": (0,1,2,3,4,5), 
     "Air": (0,1), 
     "Blo": ("Blow","X-Fan"), 
@@ -43,7 +43,7 @@ gStatus = {
     "Quiet": (0,1), 
     "Tur": (0,1), 
     # "StHt":, 
-    # "TemUn":, 
+    "TemUn": (0,1), 
     # "HeatCoolType":, 
     "TemRec": (0,1), 
     "SvSt": (0,1),
@@ -54,14 +54,13 @@ def paramTest(params, values=None):
     assert params != [], 'opt parameters not set'
     assert set(params) <= set(gStatus.keys()), 'invalid opt parameters'
     if values is not None:
-        for k,v in zip(params, p):
+        for k,v in zip(params, values):
             assert v in gStatus[k], 'invalid opt values'
 
 class gPack():
     def __init__(self, mac):
         self.mac = mac
     
-    @logged
     def packIt(self, cols:list, type=0, p=None):
         """
         creates a pack
@@ -191,13 +190,34 @@ class gController():
         mac = self.g.baseinfo.get("mac")
         self.gp = gPack(mac)
     
-    def OnOffSwitch(self):
-        _pack = self.gp.packIt(["Pow"], type=0)
-        curStatus = self.g.sendcom(_pack)['dat'][0]
-        s = 1 if curStatus == 0 else 0
-        _pack = self.gp.packIt(["Pow"], type=1, p=[s])
+    def checkCurStatus(self, p):
+        _pack = self.gp.packIt([p], type=0)
+        status = self.g.sendcom(_pack)["dat"][0] 
+        logger.info("current %s: %s" % (p, status))
+        return status
+
+    @logged
+    def checkAndSend(self, cols, v):
+        paramTest(cols, v)
+        _pack = self.gp.packIt(cols, type=1, p=v)
         self.g.sendcom(_pack)
     
+    def OnOffSwitch(self):
+        curStatus = self.checkCurStatus("Pow")
+        s = 1 if curStatus == 0 else 0
+        self.checkAndSend(["Pow"], [s])
+    
+    def setTem(self, tem):
+        curStatus = self.checkCurStatus("SetTem")
+        if tem != curStatus:
+            self.checkAndSend(["TemUn","SetTem"], [0,tem])
+    
+    def setMode(self, mode=0):
+        curStatus = self.checkCurStatus("Mod")
+        if mode != curStatus:
+            self.checkAndSend(["Mod"], [mode])
+
+
 
 
 
