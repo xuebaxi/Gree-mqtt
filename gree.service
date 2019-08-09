@@ -1,0 +1,10 @@
+[Unit]
+Description=Gree Mqtt
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/bin/python /bin/gree -c /etc/gree/config.json
+
+[Install]
+WantedBy=multi-user.target

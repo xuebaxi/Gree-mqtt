@@ -1,3 +1,4 @@
+#!/bin/env python
 import base64
 import socket
 import json
@@ -22,7 +23,7 @@ class gMqtt(mqtt.Client):
     def __init__(self):
         super().__init__()
 
-    def connect(self, host: str, port=0, topic='home/greehvac', username=None, password=None, tls=False, isselfsigned=False, selfsignedfile=None,userdata={}):
+    def connect(self, host: str, port=0, topic='home/greehvac', username=None, password=None, tls=False, isselfsigned=False, selfsignedfile=None, userdata={}):
         if port == 0:
             """Default port"""
             if tls:
@@ -40,16 +41,15 @@ class gMqtt(mqtt.Client):
                 super().tls_set()
         if username:
             super().username_pw_set(username, password)
-        userdata['topic']=topic
+        userdata['topic'] = topic
         super().user_data_set(userdata)
         super().connect(host, port)
 
-    def on_connect(self,client, userdata, flags, rc):
+    def on_connect(self, client, userdata, flags, rc):
         # Subscribing in on_connect() means that if we lose the connection and
         # reconnect then subscriptions will be renewed.
         topic = userdata['topic']+"/cmd/#"
         client.subscribe(topic)
-
 
 
 # logging
@@ -160,24 +160,34 @@ class Gree():
     def senddata(self, data: str):
         if self.hvac_host == None:
             """scan hvac"""
-            broadcast = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            broadcast.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-            if nonetifaces:
-                broadcast.sendto('{"t":"scan"}'.encode(),
+            while True:
+                broadcast = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                broadcast.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                broadcast.settimeout(0)
+                if nonetifaces:
+                    broadcast.sendto('{"t":"scan"}'.encode(),
                                  ("255.255.255.255", 7000))
-            else:
-                broadcastip = []
-                cars = netifaces.interfaces()
+                else:
+                    broadcastip = []
+                    cars = netifaces.interfaces()
+                    try:
+                        cars.remove('lo')
+                    except:
+                        pass
+                    for car in cars:
+                        broadcastip.append(netifaces.ifaddresses(
+                            car)[netifaces.AF_INET][0].get('broadcast'))
+                    for ip in broadcastip:
+                        broadcast.sendto('{"t":"scan"}'.encode(), (ip, 7000))
                 try:
-                    cars.remove('lo')
-                except:
-                    pass
-                for car in cars:
-                    broadcastip.append(netifaces.ifaddresses(
-                        car)[netifaces.AF_INET][0].get('broadcast'))
-                for ip in broadcastip:
-                    broadcast.sendto('{"t":"scan"}'.encode(), (ip, 7000))
-            addr = broadcast.recvfrom(1024)[1]
+                    time.sleep(5)
+                    addr = broadcast.recvfrom(1024)[1]
+                except BaseException as e:
+                    logger.debug(e)
+                    logger.info("Don't find hvac.")
+                    broadcast.close()
+                else:
+                    break
             broadcast.close()
             self.hvac_host = addr[0]
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -257,9 +267,9 @@ class gController():
         paramTest(cols, v)
         _pack = self.gp.packIt(cols, type=1, p=v)
         self.g.sendcom(_pack)
-    
+
     @logged
-    def checkAllAndSend(self,command:dict):
+    def checkAllAndSend(self, command: dict):
         pass
 
     def OnOffSwitch(self):
@@ -279,62 +289,63 @@ class gController():
 
 
 def on_message(client, userdata, msg):
-    logger=userdata['logger']
+    logger = userdata['logger']
     logger.debug(msg.payload)
     logger.debug(msg.topic)
-    topic=userdata['topic']
-    topic_get=topic+"/cmd/get"
-    topic_set=topic+"/cmd/set"
-    chvac=userdata['chvac']
-    gStatus=userdata['gStatus']
-    if msg.topic.find(topic_get, 0, len(topic_get))==0:
+    topic = userdata['topic']
+    topic_get = topic+"/cmd/get"
+    topic_set = topic+"/cmd/set"
+    chvac = userdata['chvac']
+    gStatus = userdata['gStatus']
+    if msg.topic.find(topic_get, 0, len(topic_get)) == 0:
         logger.debug("get mode")
         if msg.topic == topic_get:
             gkeys = list(gStatus.keys())
             status = dict(zip(gkeys, chvac.checkAllCurStatus(gkeys)))
-            publist_topic=topic+"/get"
-            publish_message(json.dumps(status),publist_topic,client)
+            publist_topic = topic+"/get"
+            publish_message(json.dumps(status), publist_topic, client)
             logger.debug("published on "+publish_message)
         else:
-            command=msg.topic[len(topic_get)+1:]
+            command = msg.topic[len(topic_get)+1:]
             if command in gStatus.keys():
                 statu = chvac.checkCurStatus(command)
-                publish_topic=topic+"/get/"+command
-                publish_message(statu,publish_topic,client)
+                publish_topic = topic+"/get/"+command
+                publish_message(statu, publish_topic, client)
                 logger.debug("published on "+publish_message)
-    elif msg.topic.find(topic_set, 0, len(topic_set))==0:
+    elif msg.topic.find(topic_set, 0, len(topic_set)) == 0:
         logger.debug("set mode")
         if msg.topic == topic_set:
-            rawcommand=json.loads(msg.payload)
-            command={}
+            rawcommand = json.loads(msg.payload)
+            command = {}
             for i in gStatus.keys():
                 if i in rawcommand:
-                    command[i]=rawcommand[i]
-            chvac.checkAndSend(list(command.keys()),list(command.values()))
+                    command[i] = rawcommand[i]
+            chvac.checkAndSend(list(command.keys()), list(command.values()))
         else:
-            command=[msg.topic[len(topic_set)+1:]]
-            p=[int(msg.payload.decode())]
+            command = [msg.topic[len(topic_set)+1:]]
+            p = [int(msg.payload.decode())]
             logger.debug(command)
             logger.debug(p)
             if command[0] in gStatus.keys():
-                chvac.checkAndSend(command,p)
+                chvac.checkAndSend(command, p)
                 statu = chvac.checkCurStatus(command[0])
                 if statu == p[0]:
-                    publish_topic=topic+"/set/"+command
-                    publish_message("True",publish_topic,client)
+                    publish_topic = topic+"/set/"+command
+                    publish_message("True", publish_topic, client)
 
 
+def publish_message(data, topic, mqttc):
+    mqttc.publish(topic, data)
 
-
-def publish_message(data,topic,mqttc):
-    mqttc.publish(topic,data)
 
 def main():
-    if len(argv)==1:
+    if len(argv) == 1:
         argv.append('-h')
     parser = argparse.ArgumentParser(description='Gree Mqtt')
     parser.add_argument("--hvac-host", dest="hvac",
                         help="hvac host ip (default: auto scan)", default=None)
+    parser.add_argument("-c", "--config", help="config file",
+                        dest='config', default=None)
     parser.add_argument("-b", "--mqtt-broker",
                         dest="broker", help="mqtt broker ip")
     parser.add_argument("-p", "--mqtt-port", dest="port",
@@ -352,11 +363,25 @@ def main():
                         help="selfsignedfile", default=None)
     parser.add_argument("--debug", dest="debug", action='store_true')
     args = parser.parse_args()
-    chvac = gController()
+    if args.config:
+        with open(args.config) as f:
+            config = json.load(f)
+            args.hvac = config.get("hvac", None)
+            args.broker = config.get("broker")
+            args.port = config.get("port", 0)
+            args.topic = config.get("topic", "home/greehvac")
+            args.username = config.get("username", None)
+            args.password = config.get("password", None)
+            args.tls = config.get("tls", False)
+            args.selfsigned = config.get("selfsigned", False)
+            args.selfsigned = config.get("selfsignedfile", None)
+    chvac = gController(args.hvac)
+    mqttc = gMqtt()
+    mqttc.on_message = on_message
     mqttc = gMqtt()
     mqttc.on_message = on_message
     mqttc.connect(args.broker, int(args.port), args.topic,
-                  args.username, args.password, args.tls, args.selfsigned, args.selfsignedfile,{'chvac':chvac,'logger':logger,'gStatus':gStatus})
+                  args.username, args.password, args.tls, args.selfsigned, args.selfsignedfile, {'chvac': chvac, 'logger': logger, 'gStatus': gStatus})
     logger.info("running")
     mqttc.loop_forever()
 
