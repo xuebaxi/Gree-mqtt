@@ -222,6 +222,10 @@ class gController():
         paramTest(cols, v)
         _pack = self.gp.packIt(cols, type=1, p=v)
         self.g.sendcom(_pack)
+    
+    @logged
+    def checkAllAndSend(self,command:dict):
+        pass
 
     def OnOffSwitch(self):
         curStatus = self.checkCurStatus("Pow")
@@ -240,10 +244,54 @@ class gController():
 
 
 def on_message(client, userdata, msg):
-    pass
+    logger=userdata['logger']
+    logger.debug(msg.payload)
+    logger.debug(msg.topic)
+    topic=userdata['topic']
+    topic_get=topic+"/cmd/get"
+    topic_set=topic+"/cmd/set"
+    chvac=userdata['chvac']
+    gStatus=userdata['gStatus']
+    if msg.topic.find(topic_get, 0, len(topic_get))==0:
+        logger.debug("get mode")
+        if msg.topic == topic_get:
+            gkeys = list(gStatus.keys())
+            status = dict(zip(gkeys, chvac.checkAllCurStatus(gkeys)))
+            publist_topic=topic+"/get"
+            publish_message(json.dumps(status),publist_topic,client)
+            logger.debug("published on "+publish_message)
+        else:
+            command=msg.topic[len(topic_get)+1:]
+            if command in gStatus.keys():
+                statu = chvac.checkCurStatus(command)
+                publish_topic=topic+"/get/"+command
+                publish_message(statu,publish_topic,client)
+                logger.debug("published on "+publish_message)
+    elif msg.topic.find(topic_set, 0, len(topic_set))==0:
+        logger.debug("set mode")
+        if msg.topic == topic_set:
+            rawcommand=json.loads(msg.payload)
+            command={}
+            for i in gStatus.keys():
+                if i in rawcommand:
+                    command[i]=rawcommand[i]
+            chvac.checkAndSend(list(command.keys()),list(command.values()))
+        else:
+            command=[msg.topic[len(topic_set)+1:]]
+            p=[int(msg.payload.decode())]
+            logger.debug(command)
+            logger.debug(p)
+            if command[0] in gStatus.keys():
+                chvac.checkAndSend(command,p)
+                statu = chvac.checkCurStatus(command[0])
+                if statu == p[0]:
+                    publish_topic=topic+"/set/"+command
+                    publish_message("True",publish_topic,client)
 
-def publish_message(data,mqttc,t):
-    topic=t+"/get"
+
+
+
+def publish_message(data,topic,mqttc):
     mqttc.publish(topic,data)
 
 def main():
@@ -267,18 +315,15 @@ def main():
                         help="selfsigned", default=False)
     parser.add_argument("--selfsignedfile", dest="selfsignedfile",
                         help="selfsignedfile", default=None)
+    parser.add_argument("--debug", dest="debug", action='store_true')
     args = parser.parse_args()
+    chvac = gController()
     mqttc = mqtt.gMqtt()
     mqttc.on_message = on_message
     mqttc.connect(args.broker, int(args.port), args.topic,
-                  args.username, args.password, args.tls, args.selfsigned, args.selfsignedfile)
-    mqttc.loop_start()
-    chvac = gController()
-    while True:
-        gkeys = list(gStatus.keys())
-        status = dict(zip(gkeys, chvac.checkAllCurStatus(gkeys)))
-        publish_message(json.dumps(status),mqttc,args.topic)
-        time.sleep(60)
+                  args.username, args.password, args.tls, args.selfsigned, args.selfsignedfile,{'chvac':chvac,'logger':logger,'gStatus':gStatus})
+    logger.info("running")
+    mqttc.loop_forever()
 
 
 if __name__ == "__main__":

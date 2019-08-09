@@ -6,7 +6,7 @@ class gMqtt(mqtt.Client):
     def __init__(self):
         super().__init__()
 
-    def connect(self, host: str, port=0, topic='home/greehvac', username=None, password=None, tls=False, isselfsigned=False, selfsignedfile=None):
+    def connect(self, host: str, port=0, topic='home/greehvac', username=None, password=None, tls=False, isselfsigned=False, selfsignedfile=None,userdata={}):
         if port == 0:
             """Default port"""
             if tls:
@@ -24,11 +24,12 @@ class gMqtt(mqtt.Client):
                 super().tls_set()
         if username:
             super().username_pw_set(username, password)
-        self.topic = topic
+        userdata['topic']=topic
+        super().user_data_set(userdata)
         super().connect(host, port)
 
     def on_connect(self,client, userdata, flags, rc):
         # Subscribing in on_connect() means that if we lose the connection and
         # reconnect then subscriptions will be renewed.
-        topic = self.topic+"/set"
+        topic = userdata['topic']+"/cmd/#"
         client.subscribe(topic)
