@@ -53,7 +53,7 @@ class gMqtt(mqtt.Client):
 
 
 # logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 
@@ -89,7 +89,6 @@ gStatus = {
     "TemRec": (0, 1),
     "SvSt": (0, 1),
 }
-
 
 def paramTest(params, values=None):
     logger.debug('opt parameters: %s, values: %s' % (params, values))
@@ -140,7 +139,7 @@ class Gree():
         utfdata = data.encode()
         paded = pad(utfdata, self.BLOCK_SIZE)
         encrypted = cipher.encrypt(paded)
-        logger.debug(encrypted)
+        logger.debug("encrypted: %s" % encrypted)
         baseed = base64.b64encode(encrypted)
         return baseed.decode()
 
@@ -152,7 +151,7 @@ class Gree():
             cipher = self.cipher
         debase = base64.b64decode(data.encode())
         decrypted = cipher.decrypt(debase)
-        logger.debug(decrypted)
+        logger.debug("decrypted: %s" % decrypted)
         unpaded = unpad(decrypted, self.BLOCK_SIZE)
         strdata = unpaded.decode()
         return strdata
@@ -181,7 +180,7 @@ class Gree():
             broadcast.close()
             self.hvac_host = addr[0]
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        logger.debug(data)
+        logger.debug("sending data: %s" % data.encode())
         self.sock.sendto(data.encode(), (self.hvac_host, 7000))
 
     def getdata(self):
@@ -191,6 +190,7 @@ class Gree():
 
     def sendpack(self, pack_: dict, i):
         pack = json.dumps(pack_)
+        logger.debug("sending pack: %s" % pack)
         data_ = {
             "cid": "app",
             "i": i,
@@ -200,14 +200,13 @@ class Gree():
             "uid": 0
         }
         data = json.dumps(data_)
-        logger.debug(data)
         self.senddata(data)
 
     def getpack(self):
         data = self.getdata()
-        logger.debug(data)
+        logger.debug("got data: %s" % data)
         pack = self.decrypt(data['pack'])
-        logger.debug(pack)
+        logger.debug("got pack: %s" % pack)
         pack_ = json.loads(pack)
         return pack_
 
@@ -241,12 +240,18 @@ class gController():
         self.gp = gPack(mac)
 
     def checkCurStatus(self, p):
+        '''
+        p: string, 空调参数
+        '''
         _pack = self.gp.packIt([p], type=0)
         status = self.g.sendcom(_pack)["dat"][0]
         logger.info("current %s: %s" % (p, status))
         return status
 
     def checkAllCurStatus(self, p):
+        '''
+        p: list, 空调参数
+        '''
         _pack = self.gp.packIt(p, type=0)
         status = self.g.sendcom(_pack)["dat"]
         logger.info("current %s: %s" % (p, status))
@@ -254,80 +259,67 @@ class gController():
 
     @logged
     def checkAndSend(self, cols, v):
+        '''
+        cols: list, 空调参数
+        v: list, 空调参数值
+        '''
         paramTest(cols, v)
         _pack = self.gp.packIt(cols, type=1, p=v)
         self.g.sendcom(_pack)
     
-    @logged
-    def checkAllAndSend(self,command:dict):
-        pass
-
-    def OnOffSwitch(self):
-        curStatus = self.checkCurStatus("Pow")
-        s = 1 if curStatus == 0 else 0
-        self.checkAndSend(["Pow"], [s])
-
-    def setTem(self, tem):
-        curStatus = self.checkCurStatus("SetTem")
-        if tem != curStatus:
-            self.checkAndSend(["TemUn", "SetTem"], [0, tem])
-
-    def setMode(self, mode=0):
-        curStatus = self.checkCurStatus("Mod")
-        if mode != curStatus:
-            self.checkAndSend(["Mod"], [mode])
-
+    def rotateAndSend(self, cmd):
+        next_value = self.checkCurStatus(cmd) + 1
+        v = gStatus[cmd][0] if next_value > gStatus[cmd][-1] else next_value
+        self.checkAndSend([cmd], [v])
+    
+    def setCmd(self, cmd):
+        if cmd == b'OnOffSwitch':
+            self.rotateAndSend("Pow")
+        elif cmd == b'upTem':
+            next_tem = self.checkCurStatus("SetTem")+1
+            v = gStatus["SetTem"][-1] if next_tem > gStatus["SetTem"][-1] else next_tem
+            self.checkAndSend(["TemUn", "SetTem"], [0, v])
+        elif cmd == b'downTem':
+            next_tem = self.checkCurStatus("SetTem")-1
+            v = gStatus["SetTem"][0] if next_tem < gStatus["SetTem"][0] else next_tem
+            self.checkAndSend(["TemUn", "SetTem"], [0, v])
+        elif cmd == b'setMode':
+            self.rotateAndSend("Mod")
 
 def on_message(client, userdata, msg):
-    logger=userdata['logger']
-    logger.debug(msg.payload)
-    logger.debug(msg.topic)
+
+    #logger=userdata['logger']
+    logger.debug("msg.payload: %s" % msg.payload)
+    logger.debug("msg.topic: %s" % msg.topic)
+
     topic=userdata['topic']
-    topic_get=topic+"/cmd/get"
-    topic_set=topic+"/cmd/set"
+    topic_get = topic+"/cmd/get"
+    topic_set = topic+"/cmd/set"
+    topic_pub = topic+'/get'
     chvac=userdata['chvac']
-    gStatus=userdata['gStatus']
-    if msg.topic.find(topic_get, 0, len(topic_get))==0:
+
+    if msg.topic == topic_get:
         logger.debug("get mode")
-        if msg.topic == topic_get:
+        status, key = "Invalid parameters", msg.payload.decode()
+        if not key:
             gkeys = list(gStatus.keys())
-            status = dict(zip(gkeys, chvac.checkAllCurStatus(gkeys)))
-            publist_topic=topic+"/get"
-            publish_message(json.dumps(status),publist_topic,client)
-            logger.debug("published on "+publish_message)
-        else:
-            command=msg.topic[len(topic_get)+1:]
-            if command in gStatus.keys():
-                statu = chvac.checkCurStatus(command)
-                publish_topic=topic+"/get/"+command
-                publish_message(statu,publish_topic,client)
-                logger.debug("published on "+publish_message)
-    elif msg.topic.find(topic_set, 0, len(topic_set))==0:
+            tmp = chvac.checkAllCurStatus(gkeys)
+            status = json.dumps(dict(zip(gkeys, tmp)))
+        elif key in gStatus:
+            topic_pub += '/%s' % key
+            status = chvac.checkCurStatus(key)
+        
+        logger.debug("status: %s, topic_pub: %s, client: %s" % (status, topic_pub, client))
+        publish_message(status, topic_pub, client)
+        logger.debug("published on "+publish_message) #  为啥这句没执行?
+
+    elif msg.topic == topic_set:
         logger.debug("set mode")
-        if msg.topic == topic_set:
-            rawcommand=json.loads(msg.payload)
-            command={}
-            for i in gStatus.keys():
-                if i in rawcommand:
-                    command[i]=rawcommand[i]
-            chvac.checkAndSend(list(command.keys()),list(command.values()))
-        else:
-            command=[msg.topic[len(topic_set)+1:]]
-            p=[int(msg.payload.decode())]
-            logger.debug(command)
-            logger.debug(p)
-            if command[0] in gStatus.keys():
-                chvac.checkAndSend(command,p)
-                statu = chvac.checkCurStatus(command[0])
-                if statu == p[0]:
-                    publish_topic=topic+"/set/"+command
-                    publish_message("True",publish_topic,client)
-
-
-
+        chvac.setCmd(msg.payload)
 
 def publish_message(data,topic,mqttc):
     mqttc.publish(topic,data)
+
 
 def main():
     if len(argv)==1:
