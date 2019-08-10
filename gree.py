@@ -53,7 +53,7 @@ class gMqtt(mqtt.Client):
 
 
 # logging
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -244,6 +244,20 @@ class Gree():
 
 
 class gController():
+    simpleCmds = {
+        b"Pow",        # power on and off
+        b"Mod",        # mode of operation: 0:auto, 1:cool, 2:dry, 3:fan, 4:heat
+        b"WdSpd",      # fan speed
+        # b"Air",      # not available on all units, uncomment it if your device supports it 
+        # b"Health",   # not available on all units, uncomment it if your device supports it 
+        b"SwhSlp",     # sleep mode
+        b"Lig",        # led light
+        b"SwingLfRig", # horizontal swing mode
+        b"SwUpDn",     # vertical swing mode
+        b"Quiet",      # Quiet mode
+        b"SvSt"        # energy saving mode
+    }
+
     def __init__(self, hvac_host=None):
         self.g = Gree(hvac_host)
         mac = self.g.baseinfo.get("mac")
@@ -282,9 +296,11 @@ class gController():
         v = gStatus[cmd][0] if next_value > gStatus[cmd][-1] else next_value
         self.checkAndSend([cmd], [v])
     
+    @logged
     def setCmd(self, cmd):
-        if cmd == b'OnOffSwitch':
-            self.rotateAndSend("Pow")
+        "set one ac command at a time, cmd in bytes"
+        if cmd in self.simpleCmds:
+            self.rotateAndSend(cmd.decode())
         elif cmd == b'upTem':
             next_tem = self.checkCurStatus("SetTem")+1
             v = gStatus["SetTem"][-1] if next_tem > gStatus["SetTem"][-1] else next_tem
@@ -293,22 +309,19 @@ class gController():
             next_tem = self.checkCurStatus("SetTem")-1
             v = gStatus["SetTem"][0] if next_tem < gStatus["SetTem"][0] else next_tem
             self.checkAndSend(["TemUn", "SetTem"], [0, v])
-        elif cmd == b'setMode':
-            self.rotateAndSend("Mod")
+
+def publish_message(data, topic, mqttc):
+    mqttc.publish(topic, data)
 
 def on_message(client, userdata, msg):
-
-    #logger=userdata['logger']
     logger.debug("msg.payload: %s" % msg.payload)
     logger.debug("msg.topic: %s" % msg.topic)
 
-    topic=userdata['topic']
-    topic_get = topic+"/cmd/get"
-    topic_set = topic+"/cmd/set"
-    topic_pub = topic+'/get'
     chvac=userdata['chvac']
-
-    if msg.topic == topic_get:
+    topic=userdata['topic']
+    topics = [topic + sub for sub in ("/cmd/get", "/cmd/set", "/get")]
+        
+    if msg.topic == topics[0]:
         logger.debug("get mode")
         status, key = "Invalid parameters", msg.payload.decode()
         if not key:
@@ -316,17 +329,13 @@ def on_message(client, userdata, msg):
             tmp = chvac.checkAllCurStatus(gkeys)
             status = json.dumps(dict(zip(gkeys, tmp)))
         elif key in gStatus:
-            topic_pub += '/%s' % key
             status = chvac.checkCurStatus(key)
-        
-        logger.debug("status: %s, topic_pub: %s, client: %s" % (status, topic_pub, client))
-        publish_message(status, topic_pub, client)
-        logger.debug("published on "+publish_message) #  为啥这句没执行?
-
-    elif msg.topic == topic_set:
+            tp = "%s/%s" % (topic[2], key)
+        publish_message(status, tp, client)
+        logger.debug("status: %s, topic: %s, client: %s" % (status, tp, client))
+    elif msg.topic == topics[1]:
         logger.debug("set mode")
         chvac.setCmd(msg.payload)
-
 
 
 def main():
@@ -366,16 +375,16 @@ def main():
             args.tls = config.get("tls", False)
             args.selfsigned = config.get("selfsigned", False)
             args.selfsigned = config.get("selfsignedfile", None)
+            args.debug = config.get("debug", False)
+    logger.debug("init arguments: %s" % args)
+    if args.debug: logger.setLevel(logging.DEBUG)
     chvac = gController(args.hvac)
     mqttc = gMqtt()
     mqttc.on_message = on_message
-    mqttc = gMqtt()
-    mqttc.on_message = on_message
     mqttc.connect(args.broker, int(args.port), args.topic,
-                  args.username, args.password, args.tls, args.selfsigned, args.selfsignedfile, {'chvac': chvac, 'logger': logger, 'gStatus': gStatus})
+                  args.username, args.password, args.tls, args.selfsigned, args.selfsignedfile, {'chvac': chvac})
     logger.info("running")
     mqttc.loop_forever()
-
 
 if __name__ == "__main__":
     main()
