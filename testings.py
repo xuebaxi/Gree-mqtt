@@ -1,22 +1,23 @@
 import unittest
-from gree import gController
+from logging import DEBUG
+from gree import gController, logger
 
+logger.setLevel(DEBUG)
 
 class ControllerTestCase(unittest.TestCase):
 
-    def test_OnOffSwitch(self):
-        #c = gController('192.168.31.84')
+    def test_PowerSwitch(self):
+        cmd = "Pow"
         c = gController()
-        before = c.checkCurStatus("Pow")
-        c.OnOffSwitch()
-        after = c.checkCurStatus("Pow")
+        before = c.checkCurStatus(cmd)
+        c.setCmd(cmd.encode())
+        after = c.checkCurStatus(cmd)
         self.assertNotEqual(before, after)
 
-    def test_setTem(self):
-        #c = gController('192.168.31.84')
+    def test_downTem(self):
         c = gController()
         before = c.checkCurStatus("SetTem")
-        c.setTem(before+1)
+        c.setCmd(b"downTem")
         after = c.checkCurStatus("SetTem")
         self.assertNotEqual(before, after)
 
