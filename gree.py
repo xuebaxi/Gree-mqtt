@@ -115,11 +115,13 @@ class gPack():
             assert p is not None, 'opt values not set'
             return {"opt": cols, "p": p, "t": "cmd"}
 
-
 class Gree():
     def __init__(self, hvac_host=None, key=0):
         """init and get hvac key"""
-        self.hvac_host = hvac_host
+        if hvac_host is None:
+            self.scanHvac()
+        else:
+            self.hvac_host = hvac_host
         self.BLOCK_SIZE = 16  # pad block size
         defaultkey = 'a3K8Bx%2r8Y7#xDh'
         self.cipher = AES.new(defaultkey.encode(), AES.MODE_ECB)
@@ -156,39 +158,36 @@ class Gree():
         strdata = unpaded.decode()
         return strdata
 
-    def senddata(self, data: str):
-        if self.hvac_host == None:
-            """scan hvac"""
-            while True:
-                broadcast = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    def scanHvac(self):
+        """scan hvac"""
+        cmd = '{"t":"scan"}'.encode()
+        netmask, port = '255.255.255.255', 7000
+
+        while True:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as broadcast:
                 broadcast.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
                 broadcast.settimeout(0)
                 if nonetifaces:
-                    broadcast.sendto('{"t":"scan"}'.encode(),
-                                 ("255.255.255.255", 7000))
+                    broadcast.sendto(cmd,(netmask,port))
                 else:
                     broadcastip = []
-                    cars = netifaces.interfaces()
-                    try:
-                        cars.remove('lo')
-                    except:
-                        pass
+                    cars = [c for c in netifaces.interfaces() if c != 'lo']
                     for car in cars:
-                        broadcastip.append(netifaces.ifaddresses(
-                            car)[netifaces.AF_INET][0].get('broadcast'))
+                        ifbc = netifaces.ifaddresses(car)[netifaces.AF_INET][0].get('broadcast')
+                        broadcastip.append(ifbc)
                     for ip in broadcastip:
-                        broadcast.sendto('{"t":"scan"}'.encode(), (ip, 7000))
+                        broadcast.sendto(cmd, (ip, port))
                 try:
                     time.sleep(5)
                     addr = broadcast.recvfrom(1024)[1]
+                    self.hvac_host = addr[0]
                 except BaseException as e:
                     logger.debug(e)
                     logger.info("Don't find hvac.")
-                    broadcast.close()
-                else:
+                finally:
                     break
-            broadcast.close()
-            self.hvac_host = addr[0]
+
+    def senddata(self, data: str):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         logger.debug("sending data: %s" % data.encode())
         self.sock.sendto(data.encode(), (self.hvac_host, 7000))
