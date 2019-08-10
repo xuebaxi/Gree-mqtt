@@ -122,6 +122,7 @@ class Gree():
             self.scanHvac()
         else:
             self.hvac_host = hvac_host
+        print(self.hvac_host)
         self.BLOCK_SIZE = 16  # pad block size
         defaultkey = 'a3K8Bx%2r8Y7#xDh'
         self.cipher = AES.new(defaultkey.encode(), AES.MODE_ECB)
@@ -158,6 +159,7 @@ class Gree():
         strdata = unpaded.decode()
         return strdata
 
+    @logged
     def scanHvac(self):
         """scan hvac"""
         cmd = '{"t":"scan"}'.encode()
@@ -191,7 +193,7 @@ class Gree():
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         logger.debug("sending data: %s" % data.encode())
         self.sock.sendto(data.encode(), (self.hvac_host, 7000))
-        self.sock.close()
+        # self.sock.close() # 这里关掉，getdata时候会报错
 
     def getdata(self):
         data = json.loads(self.sock.recv(1024).decode())
