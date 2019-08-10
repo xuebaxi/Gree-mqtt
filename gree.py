@@ -192,6 +192,7 @@ class Gree():
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         logger.debug("sending data: %s" % data.encode())
         self.sock.sendto(data.encode(), (self.hvac_host, 7000))
+        self.sock.close()
 
     def getdata(self):
         data = json.loads(self.sock.recv(1024).decode())
