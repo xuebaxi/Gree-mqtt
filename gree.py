@@ -264,6 +264,7 @@ class gController():
 
     def checkCurStatus(self, p):
         '''
+        检查一个参数当前的值
         p: string, 空调参数
         '''
         _pack = self.gp.packIt([p], type=0)
@@ -273,6 +274,7 @@ class gController():
 
     def checkAllCurStatus(self, p):
         '''
+        检查所有参数当前的值
         p: list, 空调参数
         '''
         _pack = self.gp.packIt(p, type=0)
@@ -283,14 +285,14 @@ class gController():
     @logged
     def checkAndSend(self, cols, v):
         '''
+        检查即将发送的参数和值是否在有效范围内，并发送到AC
         cols: list, 空调参数
         v: list, 空调参数值
         return: response json
         '''
         paramTest(cols, v)
         _pack = self.gp.packIt(cols, type=1, p=v)
-        r = self.g.sendcom(_pack)
-        return r['val']
+        return self.g.sendcom(_pack)['val']
     
     def rotateAndSend(self, cmd):
         next_value = self.checkCurStatus(cmd) + 1
@@ -299,20 +301,23 @@ class gController():
     
     @logged
     def setCmd(self, cmd, value):
-        "set one ac command at a time, cmd in bytes"
-        if cmd == 'Pow':
-            v = 0 if value else 1
-            return self.checkAndSend([cmd], [v])[0]
-        elif cmd in self.simpleCmds:
-            self.checkAndSend([cmd], [value])
-        elif cmd == 'upTem':
+        """
+        set one ac command at a time
+        """
+        if cmd in self.simpleCmds:
+            v = int(value)
+            r = self.checkAndSend([cmd], [v])
+            return r[0]
+        elif cmd == 'SetTem' and value == b'upTem':
             next_tem = self.checkCurStatus("SetTem")+1
             v = gStatus["SetTem"][-1] if next_tem > gStatus["SetTem"][-1] else next_tem
-            self.checkAndSend(["TemUn", "SetTem"], [0, v])
-        elif cmd == 'downTem':
+            r = self.checkAndSend(["TemUn", "SetTem"], [0, v])
+            return r[-1]
+        elif cmd == 'SetTem' and value == b'downTem':
             next_tem = self.checkCurStatus("SetTem")-1
             v = gStatus["SetTem"][0] if next_tem < gStatus["SetTem"][0] else next_tem
-            self.checkAndSend(["TemUn", "SetTem"], [0, v])
+            r = self.checkAndSend(["TemUn", "SetTem"], [0, v])
+            return r[-1]
 
 def publish_message(data, topic, mqttc):
     mqttc.publish(topic, data)
@@ -323,40 +328,24 @@ def on_message(client, userdata, msg):
 
     chvac=userdata['chvac']
     topic=userdata['topic']
-    topics = [topic + sub for sub in ("/cmd/get", "/cmd/set", "/get")]
-    logger.debug("topics: %s" % topics)
+    sub_topics = [f'{topic}{sub}' for sub in ('/cmd/set', '/cmd/get', '/get')]
 
-    if msg.topic == topics[-1]:
+    if msg.topic == sub_topics[-1]:
+        logger.debug(f"sub topic: {sub_topics[-1]}")
         pass
     else:
-        logger.debug("cmd mode")
+        logger.debug("cmd topic")
         parent = os.path.dirname(msg.topic)
         cmd = os.path.basename(msg.topic)
-        value = int(msg.payload)
-        if parent == topics[1]:
-            logger.debug("set mode")
-            status = chvac.setCmd(cmd, value)
-            logger.debug(status)
-            tp = os.path.join(topics[0], cmd)
-            logger.debug(tp)
-            publish_message(status, tp, client)
-
-   # if msg.topic == topics[0]:
-   #     logger.debug("get mode")
-   #     status, key = "Invalid parameters", msg.payload.decode()
-   #     if not key:
-   #         gkeys = list(gStatus.keys())
-   #         tmp = chvac.checkAllCurStatus(gkeys)
-   #         status = json.dumps(dict(zip(gkeys, tmp)))
-   #     elif key in gStatus:
-   #         status = chvac.checkCurStatus(key)
-   #         tp = "%s/%s" % (topic[2], key)
-   #     publish_message(status, tp, client)
-   #     logger.debug("status: %s, topic: %s, client: %s" % (status, tp, client))
-   # elif msg.topic == topics[1]:
-   #     logger.debug("set mode")
-   #     chvac.setCmd(msg.payload)
-
+        for var in (parent, cmd):
+            logger.debug(f"var: {var}")
+        if parent == sub_topics[0]:
+            logger.debug(f"sub topic: {sub_topics[0]}")
+            ac_response = chvac.setCmd(cmd, msg.payload)
+            response_topic = os.path.join(sub_topics[1], cmd)
+            publish_message(ac_response, response_topic, client)
+        elif parent == sub_topics[1]:
+            logger.debug(f"sub topic: {sub_topics[1]}")
 
 def main():
     if len(argv) == 1:
