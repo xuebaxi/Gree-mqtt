@@ -329,6 +329,9 @@ def on_message(client, userdata, msg):
 
     if msg.topic == sub_topics[2]:
         logger.debug(f"sub topic: {sub_topics[-1]}")
+    elif msg.topic == sub_topics[1]:
+        ac_status = json.dumps(chvac.checkAllCurStatus())
+        publish_message(ac_status, sub_topics[2], client)
     else:
         logger.debug("cmd topic")
         parent = os.path.dirname(msg.topic)
