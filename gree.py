@@ -307,8 +307,12 @@ class gController():
             next_tem = self.checkCurStatus("SetTem")-1
             v = gStatus["SetTem"][0] if next_tem < gStatus["SetTem"][0] else next_tem
             self.checkAndSend(["TemUn", "SetTem"], [0, v])
+        elif cmd.decode().isnumeric():
+            self.checkAndSend(["TemUn", "SetTem"], [0, int(cmd.decode())])
+
 
 def publish_message(data, topic, mqttc):
+    logger.debug("publish on "+topic)
     mqttc.publish(topic, data)
 
 def on_message(client, userdata, msg):
@@ -326,6 +330,7 @@ def on_message(client, userdata, msg):
             gkeys = list(gStatus.keys())
             tmp = chvac.checkAllCurStatus(gkeys)
             status = json.dumps(dict(zip(gkeys, tmp)))
+            tp = topics[2]
         elif key in gStatus:
             status = chvac.checkCurStatus(key)
             tp = "%s/%s" % (topic[2], key)
@@ -334,6 +339,11 @@ def on_message(client, userdata, msg):
     elif msg.topic == topics[1]:
         logger.debug("set mode")
         chvac.setCmd(msg.payload)
+        gkeys = list(gStatus.keys())
+        tmp = chvac.checkAllCurStatus(gkeys)
+        status = json.dumps(dict(zip(gkeys, tmp)))
+        tp = topics[2]
+        publish_message(status, tp, client)
 
 
 def main():
