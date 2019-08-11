@@ -73,7 +73,7 @@ def logged(func):
 gStatus = {
     'Pow': (0, 1),
     'Mod': (0, 1, 2, 3, 4),
-    "SetTem": tuple(range(17, 31)),
+    "SetTem": tuple(range(16, 31)),
     "WdSpd": (0, 1, 2, 3, 4, 5),
     "Air": (0, 1),
     "Blo": ("Blow", "X-Fan"),
@@ -185,8 +185,8 @@ class Gree():
                     addr = broadcast.recvfrom(1024)[1]
                     self.hvac_host = addr[0]
                 except BaseException as e:
-                    logger.debug(e)
-                    logger.info("Don't find hvac.")
+                    logger.exception(e)
+                    logger.error("Don't find hvac.")
                 else:
                     break
 
@@ -272,14 +272,16 @@ class gController():
         logger.info("current %s: %s" % (p, status))
         return status
 
-    def checkAllCurStatus(self, p):
+    def checkAllCurStatus(self, p=None):
         '''
         检查所有参数当前的值
-        p: list, 空调参数
+        p: list, 1个或多个空调参数, 为None时自动获取所有gStatus里面的key
         '''
+        p = p if p is not None else list(gStatus.keys())
         _pack = self.gp.packIt(p, type=0)
         status = self.g.sendcom(_pack)["dat"]
-        logger.info("current %s: %s" % (p, status))
+        status = dict(zip(p,status))
+        logger.info("current status: %s" % status)
         return status
 
     @logged
@@ -303,47 +305,46 @@ class gController():
     def setCmd(self, cmd, value):
         """
         set one ac command at a time
+        cmd: string
+        value: int
         """
         if cmd in self.simpleCmds:
-            v = int(value)
-            r = self.checkAndSend([cmd], [v])
+            r = self.checkAndSend([cmd], [value])
             return r[0]
-        elif cmd == 'SetTem' and value == b'upTem':
-            next_tem = self.checkCurStatus("SetTem")+1
-            v = gStatus["SetTem"][-1] if next_tem > gStatus["SetTem"][-1] else next_tem
-            r = self.checkAndSend(["TemUn", "SetTem"], [0, v])
-            return r[-1]
-        elif cmd == 'SetTem' and value == b'downTem':
-            next_tem = self.checkCurStatus("SetTem")-1
-            v = gStatus["SetTem"][0] if next_tem < gStatus["SetTem"][0] else next_tem
-            r = self.checkAndSend(["TemUn", "SetTem"], [0, v])
+        elif cmd == 'SetTem':
+            r = self.checkAndSend(["TemUn", "SetTem"], [0, value])
             return r[-1]
 
 def publish_message(data, topic, mqttc):
+    logger.debug("publish on "+topic)
     mqttc.publish(topic, data)
 
 def on_message(client, userdata, msg):
-    logger.debug("msg.payload: %s" % msg.payload) # 0 or 1
-    logger.debug("msg.topic: %s" % msg.topic) # home/greehvac/cmd/set/Pow 
+    logger.info("msg.payload: %s" % msg.payload)
+    logger.info("msg.topic: %s" % msg.topic)
 
     chvac=userdata['chvac']
     topic=userdata['topic']
     sub_topics = [f'{topic}{sub}' for sub in ('/cmd/set', '/cmd/get', '/get')]
 
-    if msg.topic == sub_topics[-1]:
+    if msg.topic == sub_topics[2]:
         logger.debug(f"sub topic: {sub_topics[-1]}")
-        pass
     else:
         logger.debug("cmd topic")
         parent = os.path.dirname(msg.topic)
         cmd = os.path.basename(msg.topic)
-        for var in (parent, cmd):
+        value = int(msg.payload)
+        for var in (parent, cmd, value):
             logger.debug(f"var: {var}")
         if parent == sub_topics[0]:
             logger.debug(f"sub topic: {sub_topics[0]}")
-            ac_response = chvac.setCmd(cmd, msg.payload)
+            # 执行指令并发布对应状态
+            ac_response = chvac.setCmd(cmd, value)
             response_topic = os.path.join(sub_topics[1], cmd)
             publish_message(ac_response, response_topic, client)
+            # 发布AC当前所有状态
+            ac_status = json.dumps(chvac.checkAllCurStatus())
+            publish_message(ac_status, sub_topics[2], client)
         elif parent == sub_topics[1]:
             logger.debug(f"sub topic: {sub_topics[1]}")
 
@@ -392,7 +393,7 @@ def main():
     mqttc.on_message = on_message
     mqttc.connect(args.broker, int(args.port), args.topic,
                   args.username, args.password, args.tls, args.selfsigned, args.selfsignedfile, {'chvac': chvac})
-    logger.info("running")
+    logger.info("Gree-mqtt Running")
     mqttc.loop_forever()
 
 if __name__ == "__main__":
