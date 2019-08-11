@@ -187,17 +187,19 @@ class Gree():
                 except BaseException as e:
                     logger.debug(e)
                     logger.info("Don't find hvac.")
-                finally:
+                else:
                     break
 
     def senddata(self, data: str):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.settimeout(100)
         logger.debug("sending data: %s" % data.encode())
         self.sock.sendto(data.encode(), (self.hvac_host, 7000))
-        # self.sock.close() # 这里关掉，getdata时候会报错
-
-    def getdata(self):
-        data = json.loads(self.sock.recv(1024).decode())
+        data=None
+        try:
+            data = json.loads(self.sock.recv(1024).decode())
+        except:
+            logger.info("timeout")
         self.sock.close()
         return data
 
@@ -213,21 +215,17 @@ class Gree():
             "uid": 0
         }
         data = json.dumps(data_)
-        self.senddata(data)
-
-    def getpack(self):
-        data = self.getdata()
-        logger.debug("got data: %s" % data)
-        pack = self.decrypt(data['pack'])
-        logger.debug("got pack: %s" % pack)
-        pack_ = json.loads(pack)
-        return pack_
+        data_get = self.senddata(data)
+        logger.debug("got data: %s" % data_get)
+        pack_get = self.decrypt(data_get['pack'])
+        logger.debug("got pack: %s" % pack_get)
+        pack_get_ = json.loads(pack_get)
+        return pack_get_
 
     def getbaseinfo(self):
         data_ = {"t": "scan"}
         data = json.dumps(data_)
-        self.senddata(data)
-        baseinfo = self.getdata()
+        baseinfo = self.senddata(data)
         logger.debug("ac baseinfo: %s " % baseinfo)
         return json.loads(self.decrypt(baseinfo['pack']))
 
@@ -236,14 +234,12 @@ class Gree():
             "mac": mac,
             "t": "bind",
             "uid": 0
-        }
-        self.sendpack(pack, 1)
-        key = self.getpack()['key']
+        }        
+        key = self.sendpack(pack, 1)['key']
         return key
 
-    def sendcom(self, pack: dict):
-        self.sendpack(pack, 0)
-        return self.getpack()
+    def sendcom(self, pack: dict):      
+        return self.sendpack(pack, 0)
 
 
 class gController():
