@@ -4,6 +4,7 @@ import socket
 import json
 import logging
 import os
+import signal
 from sys import argv
 from functools import wraps
 from Crypto.Cipher import AES
@@ -19,6 +20,26 @@ import time
 import paho.mqtt.client as mqtt
 import ssl
 
+
+# logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class locker:
+    lock = '/tmp/greehvac.lck'
+
+    def __init__(self, s):
+        assert not os.path.isfile(self.lock), 'another instance is running ..'
+        with open(self.lock, 'a'):
+            os.utime(self.lock, None)
+        signal.signal(signal.SIGINT, self.rmlck)
+        signal.signal(signal.SIGTERM, self.rmlck)
+        self.to_kill = s
+
+    def rmlck(self, signum, frame):
+        logger.warning(f"got signal: {signum}")
+        self.to_kill.disconnect()
+        os.unlink(self.lock)
 
 class gMqtt(mqtt.Client):
     def __init__(self):
@@ -52,12 +73,6 @@ class gMqtt(mqtt.Client):
         topic = userdata['topic']+"/cmd/#"
         client.subscribe(topic)
 
-
-# logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-
 def logged(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
@@ -68,7 +83,6 @@ def logged(func):
             logger.exception('%s' % func.__name__)
             raise
     return wrapper
-
 
 gStatus = {
     'Pow': (0, 1),
@@ -386,6 +400,7 @@ def main():
     if args.debug: logger.setLevel(logging.DEBUG)
     chvac = gController(args.hvac)
     mqttc = gMqtt()
+    lckr = locker(mqttc)
     mqttc.on_message = on_message
     mqttc.connect(args.broker, int(args.port), args.topic,
                   args.username, args.password, args.tls, args.selfsigned, args.selfsignedfile, {'chvac': chvac})
@@ -393,12 +408,4 @@ def main():
     mqttc.loop_forever()
 
 if __name__ == "__main__":
-    # lockfile 
-    lock = '/tmp/greehvac_mqtt.lck'
-    assert not os.path.isfile(lock), 'another instance is running ..'
-    with open(lock, 'a'): os.utime(lock, None)
-
-    try:
-        main()
-    finally:
-        os.unlink(lock)
+    main()
