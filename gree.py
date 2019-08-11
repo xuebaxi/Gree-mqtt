@@ -3,6 +3,7 @@ import base64
 import socket
 import json
 import logging
+import os
 from sys import argv
 from functools import wraps
 from Crypto.Cipher import AES
@@ -122,7 +123,7 @@ class Gree():
             self.scanHvac()
         else:
             self.hvac_host = hvac_host
-        print(self.hvac_host)
+        logger.debug("hvac host: %s" % self.hvac_host)
         self.BLOCK_SIZE = 16  # pad block size
         defaultkey = 'a3K8Bx%2r8Y7#xDh'
         self.cipher = AES.new(defaultkey.encode(), AES.MODE_ECB)
@@ -247,17 +248,17 @@ class Gree():
 
 class gController():
     simpleCmds = {
-        b"Pow",        # power on and off
-        b"Mod",        # mode of operation: 0:auto, 1:cool, 2:dry, 3:fan, 4:heat
-        b"WdSpd",      # fan speed
-        # b"Air",      # not available on all units, uncomment it if your device supports it 
-        # b"Health",   # not available on all units, uncomment it if your device supports it 
-        b"SwhSlp",     # sleep mode
-        b"Lig",        # led light
-        b"SwingLfRig", # horizontal swing mode
-        b"SwUpDn",     # vertical swing mode
-        b"Quiet",      # Quiet mode
-        b"SvSt"        # energy saving mode
+        "Pow",        # power on and off
+        "Mod",        # mode of operation: 0:auto, 1:cool, 2:dry, 3:fan, 4:heat
+        "WdSpd",      # fan speed
+        # "Air",      # not available on all units, uncomment it if your device supports it 
+        # "Health",   # not available on all units, uncomment it if your device supports it 
+        "SwhSlp",     # sleep mode
+        "Lig",        # led light
+        "SwingLfRig", # horizontal swing mode
+        "SwUpDn",     # vertical swing mode
+        "Quiet",      # Quiet mode
+        "SvSt"        # energy saving mode
     }
 
     def __init__(self, hvac_host=None):
@@ -288,10 +289,12 @@ class gController():
         '''
         cols: list, 空调参数
         v: list, 空调参数值
+        return: response json
         '''
         paramTest(cols, v)
         _pack = self.gp.packIt(cols, type=1, p=v)
-        self.g.sendcom(_pack)
+        r = self.g.sendcom(_pack)
+        return r['val']
     
     def rotateAndSend(self, cmd):
         next_value = self.checkCurStatus(cmd) + 1
@@ -299,15 +302,18 @@ class gController():
         self.checkAndSend([cmd], [v])
     
     @logged
-    def setCmd(self, cmd):
+    def setCmd(self, cmd, value):
         "set one ac command at a time, cmd in bytes"
-        if cmd in self.simpleCmds:
-            self.rotateAndSend(cmd.decode())
-        elif cmd == b'upTem':
+        if cmd == 'Pow':
+            v = 0 if value else 1
+            return self.checkAndSend([cmd], [v])[0]
+        elif cmd in self.simpleCmds:
+            self.checkAndSend([cmd], [value])
+        elif cmd == 'upTem':
             next_tem = self.checkCurStatus("SetTem")+1
             v = gStatus["SetTem"][-1] if next_tem > gStatus["SetTem"][-1] else next_tem
             self.checkAndSend(["TemUn", "SetTem"], [0, v])
-        elif cmd == b'downTem':
+        elif cmd == 'downTem':
             next_tem = self.checkCurStatus("SetTem")-1
             v = gStatus["SetTem"][0] if next_tem < gStatus["SetTem"][0] else next_tem
             self.checkAndSend(["TemUn", "SetTem"], [0, v])
@@ -316,28 +322,44 @@ def publish_message(data, topic, mqttc):
     mqttc.publish(topic, data)
 
 def on_message(client, userdata, msg):
-    logger.debug("msg.payload: %s" % msg.payload)
-    logger.debug("msg.topic: %s" % msg.topic)
+    logger.debug("msg.payload: %s" % msg.payload) # 0 or 1
+    logger.debug("msg.topic: %s" % msg.topic) # home/greehvac/cmd/set/Pow 
 
     chvac=userdata['chvac']
     topic=userdata['topic']
     topics = [topic + sub for sub in ("/cmd/get", "/cmd/set", "/get")]
-        
-    if msg.topic == topics[0]:
-        logger.debug("get mode")
-        status, key = "Invalid parameters", msg.payload.decode()
-        if not key:
-            gkeys = list(gStatus.keys())
-            tmp = chvac.checkAllCurStatus(gkeys)
-            status = json.dumps(dict(zip(gkeys, tmp)))
-        elif key in gStatus:
-            status = chvac.checkCurStatus(key)
-            tp = "%s/%s" % (topic[2], key)
-        publish_message(status, tp, client)
-        logger.debug("status: %s, topic: %s, client: %s" % (status, tp, client))
-    elif msg.topic == topics[1]:
-        logger.debug("set mode")
-        chvac.setCmd(msg.payload)
+    logger.debug("topics: %s" % topics)
+
+    if msg.topic == topics[-1]:
+        pass
+    else:
+        logger.debug("cmd mode")
+        parent = os.path.dirname(msg.topic)
+        cmd = os.path.basename(msg.topic)
+        value = int(msg.payload)
+        if parent == topics[1]:
+            logger.debug("set mode")
+            status = chvac.setCmd(cmd, value)
+            logger.debug(status)
+            tp = os.path.join(topics[0], cmd)
+            logger.debug(tp)
+            publish_message(status, tp, client)
+
+   # if msg.topic == topics[0]:
+   #     logger.debug("get mode")
+   #     status, key = "Invalid parameters", msg.payload.decode()
+   #     if not key:
+   #         gkeys = list(gStatus.keys())
+   #         tmp = chvac.checkAllCurStatus(gkeys)
+   #         status = json.dumps(dict(zip(gkeys, tmp)))
+   #     elif key in gStatus:
+   #         status = chvac.checkCurStatus(key)
+   #         tp = "%s/%s" % (topic[2], key)
+   #     publish_message(status, tp, client)
+   #     logger.debug("status: %s, topic: %s, client: %s" % (status, tp, client))
+   # elif msg.topic == topics[1]:
+   #     logger.debug("set mode")
+   #     chvac.setCmd(msg.payload)
 
 
 def main():
