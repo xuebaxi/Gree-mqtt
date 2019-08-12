@@ -4,6 +4,7 @@ import socket
 import json
 import logging
 import os
+import signal
 from sys import argv
 from functools import wraps
 from Crypto.Cipher import AES
@@ -19,6 +20,26 @@ import time
 import paho.mqtt.client as mqtt
 import ssl
 
+
+# logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class locker:
+    lock = '/tmp/greehvac.lck'
+
+    def __init__(self, s):
+        assert not os.path.isfile(self.lock), 'another instance is running ..'
+        with open(self.lock, 'a'):
+            os.utime(self.lock, None)
+        signal.signal(signal.SIGINT, self.rmlck)
+        signal.signal(signal.SIGTERM, self.rmlck)
+        self.to_kill = s
+
+    def rmlck(self, signum, frame):
+        logger.warning(f"got signal: {signum}")
+        self.to_kill.disconnect()
+        os.unlink(self.lock)
 
 class gMqtt(mqtt.Client):
     def __init__(self):
@@ -52,23 +73,16 @@ class gMqtt(mqtt.Client):
         topic = userdata['topic']+"/cmd/#"
         client.subscribe(topic)
 
-
-# logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-
 def logged(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
-        logger.info('running %s' % func.__name__)
+        logger.debug(f'FUNC: {func.__name__}, args: {args}, kwargs: {kwargs}')
         try:
             return func(*args, **kwargs)
         except:
             logger.exception('%s' % func.__name__)
             raise
     return wrapper
-
 
 gStatus = {
     'Pow': (0, 1),
@@ -82,7 +96,7 @@ gStatus = {
     "Lig": (0, 1),
     "SwingLfRig": (0, 1, 2, 3, 4, 5, 6),
     "SwUpDn": (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11),
-    "Quiet": (0, 1),
+    "Quiet": (0, 1, 2), # 发现2才是静音，好像要同时调节风速
     "Tur": (0, 1),
     # "StHt":,
     "TemUn": (0, 1),
@@ -91,8 +105,8 @@ gStatus = {
     "SvSt": (0, 1),
 }
 
+@logged
 def paramTest(params, values=None):
-    logger.debug('opt parameters: %s, values: %s' % (params, values))
     assert params != [], 'opt parameters not set'
     assert set(params) <= set(gStatus.keys()), 'invalid opt parameters'
     if values is not None:
@@ -143,7 +157,7 @@ class Gree():
         utfdata = data.encode()
         paded = pad(utfdata, self.BLOCK_SIZE)
         encrypted = cipher.encrypt(paded)
-        logger.debug("encrypted: %s" % encrypted)
+        #logger.debug(f"encrypted: {encrypted}")
         baseed = base64.b64encode(encrypted)
         return baseed.decode()
 
@@ -155,7 +169,7 @@ class Gree():
             cipher = self.cipher
         debase = base64.b64decode(data.encode())
         decrypted = cipher.decrypt(debase)
-        logger.debug("decrypted: %s" % decrypted)
+        #logger.debug(f"decrypted: {decrypted}")
         unpaded = unpad(decrypted, self.BLOCK_SIZE)
         strdata = unpaded.decode()
         return strdata
@@ -193,19 +207,19 @@ class Gree():
     def senddata(self, data: str):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.settimeout(100)
-        logger.debug("sending data: %s" % data.encode())
+        # logger.debug("sending data: %s" % data.encode())
         self.sock.sendto(data.encode(), (self.hvac_host, 7000))
         data=None
         try:
             data = json.loads(self.sock.recv(1024).decode())
         except:
-            logger.info("timeout")
+            logger.warning("timeout")
         self.sock.close()
         return data
 
     def sendpack(self, pack_: dict, i):
         pack = json.dumps(pack_)
-        logger.debug("sending pack: %s" % pack)
+        logger.debug(f"sending pack: {pack}")
         data_ = {
             "cid": "app",
             "i": i,
@@ -216,17 +230,17 @@ class Gree():
         }
         data = json.dumps(data_)
         data_get = self.senddata(data)
-        logger.debug("got data: %s" % data_get)
+        #logger.debug("got data: %s" % data_get)
         pack_get = self.decrypt(data_get['pack'])
-        logger.debug("got pack: %s" % pack_get)
         pack_get_ = json.loads(pack_get)
+        logger.debug(f"got pack: {pack_get_}")
         return pack_get_
 
     def getbaseinfo(self):
         data_ = {"t": "scan"}
         data = json.dumps(data_)
         baseinfo = self.senddata(data)
-        logger.debug("ac baseinfo: %s " % baseinfo)
+        logger.debug(f"ac baseinfo: {baseinfo}")
         return json.loads(self.decrypt(baseinfo['pack']))
 
     def getkey(self, mac):
@@ -269,7 +283,7 @@ class gController():
         '''
         _pack = self.gp.packIt([p], type=0)
         status = self.g.sendcom(_pack)["dat"][0]
-        logger.info("current %s: %s" % (p, status))
+        logger.debug(f"current {p}: {status}")
         return status
 
     def checkAllCurStatus(self, p=None):
@@ -281,7 +295,7 @@ class gController():
         _pack = self.gp.packIt(p, type=0)
         status = self.g.sendcom(_pack)["dat"]
         status = dict(zip(p,status))
-        logger.info("current status: %s" % status)
+        logger.debug(f"current status: {status}")
         return status
 
     @logged
@@ -295,11 +309,6 @@ class gController():
         paramTest(cols, v)
         _pack = self.gp.packIt(cols, type=1, p=v)
         return self.g.sendcom(_pack)['val']
-    
-    def rotateAndSend(self, cmd):
-        next_value = self.checkCurStatus(cmd) + 1
-        v = gStatus[cmd][0] if next_value > gStatus[cmd][-1] else next_value
-        self.checkAndSend([cmd], [v])
     
     @logged
     def setCmd(self, cmd, value):
@@ -315,13 +324,14 @@ class gController():
             r = self.checkAndSend(["TemUn", "SetTem"], [0, value])
             return r[-1]
 
+@logged
 def publish_message(data, topic, mqttc):
-    logger.debug("publish on "+topic)
+    logger.info(f"publish on {topic}")
     mqttc.publish(topic, data)
 
+@logged
 def on_message(client, userdata, msg):
-    logger.info("msg.payload: %s" % msg.payload)
-    logger.info("msg.topic: %s" % msg.topic)
+    logger.info(f"Message from topic: {msg.topic}, payload: {msg.payload}")
 
     chvac=userdata['chvac']
     topic=userdata['topic']
@@ -389,10 +399,11 @@ def main():
             args.selfsigned = config.get("selfsigned", False)
             args.selfsigned = config.get("selfsignedfile", None)
             args.debug = config.get("debug", False)
-    logger.debug("init arguments: %s" % args)
+    logger.debug(f"init arguments: {args}")
     if args.debug: logger.setLevel(logging.DEBUG)
     chvac = gController(args.hvac)
     mqttc = gMqtt()
+    lckr = locker(mqttc)
     mqttc.on_message = on_message
     mqttc.connect(args.broker, int(args.port), args.topic,
                   args.username, args.password, args.tls, args.selfsigned, args.selfsignedfile, {'chvac': chvac})
