@@ -137,6 +137,8 @@ class Gree():
             self.scanHvac()
         else:
             self.hvac_host = hvac_host
+        while not(self.isconnect()):
+            continue
         logger.debug("hvac host: %s" % self.hvac_host)
         self.BLOCK_SIZE = 16  # pad block size
         defaultkey = 'a3K8Bx%2r8Y7#xDh'
@@ -203,10 +205,15 @@ class Gree():
                     logger.error("Don't find hvac.")
                 else:
                     break
+    
+    def isconnect(self):
+        data_ = {"t": "scan"}
+        data = json.dumps(data_)
+        return self.senddata(data)
 
     def senddata(self, data: str):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.sock.settimeout(100)
+        self.sock.settimeout(10)
         # logger.debug("sending data: %s" % data.encode())
         self.sock.sendto(data.encode(), (self.hvac_host, 7000))
         data=None
@@ -403,7 +410,7 @@ def main():
     if args.debug: logger.setLevel(logging.DEBUG)
     chvac = gController(args.hvac)
     mqttc = gMqtt()
-    lckr = locker(mqttc)
+    locker(mqttc)
     mqttc.on_message = on_message
     mqttc.connect(args.broker, int(args.port), args.topic,
                   args.username, args.password, args.tls, args.selfsigned, args.selfsignedfile, {'chvac': chvac})
